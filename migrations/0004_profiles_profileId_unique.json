@@ -1,0 +1,8 @@
+{
+  "runCommand": {
+    "createIndexes": "profiles",
+    "indexes": [
+      { "key": { "profileId": 1 }, "name": "uniq_profileId", "unique": true }
+    ]
+  }
+}

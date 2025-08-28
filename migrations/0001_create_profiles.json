@@ -1,0 +1,4 @@
+[
+  { "runCommand": { "create": "profiles" } },
+  { "runCommand": { "createIndexes": "profiles", "indexes": [ { "key": { "email": 1 }, "name": "uniq_email", "unique": true } ] } }
+]

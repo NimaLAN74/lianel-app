@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+.table-card { @apply bg-white shadow border border-slate-200 rounded-lg; }
+.table-head { @apply bg-brand-blue text-white; }
+
+.badge { @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium; }
+.badge-green { @apply bg-brand-green text-white; }
+.badge-blue  { @apply bg-brand-blue text-white; }
