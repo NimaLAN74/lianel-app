@@ -1,76 +1,78 @@
+version: "3.9"
+
 services:
-  mongo:
-    image: mongo:7.0
-    container_name: mongo
-    restart: unless-stopped
-    networks: [appnet]
-    volumes:
-      - mongo_data:/data/db
+  profile-api:
+    build:
+      context: ./api/profile
+    image: profile-api
+    container_name: profile-api
     environment:
-      - MONGO_INITDB_DATABASE=lianel
+      SERVER_PORT: 8081
+      DBSERVICE_BASEURL: http://db-service:8082
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/mini?directConnection=true
+      SPRING_DATA_MONGODB_DATABASE: mini
+    expose:
+      - "8081"
+    depends_on:
+      db-service:
+        condition: service_started
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
 
   db-service:
     build:
       context: ./api/dbservice
     image: db-service
     container_name: db-service
-    restart: unless-stopped
-    networks: [appnet]
+    environment:
+      SERVER_PORT: 8082
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/mini?directConnection=true
+      SPRING_DATA_MONGODB_DATABASE: mini
     expose:
       - "8082"
-    environment:
-      # Spring Boot port inside container
-      - SERVER_PORT=8082
-      # Mongo inside compose network
-      - SPRING_DATA_MONGODB_URI=mongodb://mongo:27017/lianel?directConnection=true
-      - SPRING_DATA_MONGODB_DATABASE=lianel
-      # If you use migrations folder in the image/container
-      - MIGRATIONS_DIR=/migrations
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
 
-  profile-api:
+  finance-service:
     build:
-      context: ./api/profile
-    image: profile-api
-    container_name: profile-api
-    restart: unless-stopped
-    networks: [appnet]
-    expose:
-      - "8081"
+      context: ./api/financeservice
+    image: finance-service
+    container_name: finance-service
     environment:
-      - SERVER_PORT=8081
-      # Where profile-api calls the db-service
-      - DBSERVICE_BASEURL=http://db-service:8082
-      # (Profile does NOT connect to Mongo directly anymore)
-      # Keeping for compatibility if your code still references them:
-      # - SPRING_DATA_MONGODB_URI=
-      # - SPRING_DATA_MONGODB_DATABASE=
-      - MIGRATIONS_DIR=/migrations
+      SERVER_PORT: 8083
+      DBSERVICE_BASEURL: http://db-service:8082
+      DBSERVICE_FINANCEPATH: /finance
+      SPRING_DATA_MONGODB_URI: mongodb://mongo:27017/mini?directConnection=true
+      SPRING_DATA_MONGODB_DATABASE: mini
+    expose:
+      - "8083"
     depends_on:
-      - db-service
-
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: nginx-box
+      db-service:
+        condition: service_started
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
-    networks: [appnet]
-    depends_on:
-      - profile-api
-      - db-service
-    # Local/dev HTTPS (self-signed or mkcert)
-    ports:
-      - "8443:8443"
-    volumes:
-      - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./proxy/tls:/etc/nginx/tls:ro
 
-  # === NEW: Traefik reverse proxy + ACME (Let's Encrypt) on 80/443 ===
+  web:
+    image: node:20-alpine
+    container_name: web
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_API_ORIGIN: https://localhost:8443
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    expose:
+      - "5173"
+    restart: unless-stopped
+
   traefik:
-    image: traefik
-    container_name: traefik
+    image: "traefik"
     restart: always
-    networks: [appnet]
     command:
       - "--api.insecure=true"
       - "--providers.docker=true"
@@ -89,13 +91,9 @@ services:
       - traefik_data:/letsencrypt
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
-  # === NEW: n8n behind Traefik ===
   n8n:
     image: docker.n8n.io/n8nio/n8n
-    container_name: n8n
     restart: always
-    networks: [appnet]
-    # local port not strictly needed when fronted by Traefik, but keeping for localhost access:
     ports:
       - "127.0.0.1:5678:5678"
     labels:
@@ -127,10 +125,42 @@ services:
       - n8n_data:/home/node/.n8n
       - ./local-files:/files
 
-networks:
-  appnet: {}
+  mongo:
+    image: mongo:7.0
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: proxy
+    depends_on:
+      - profile-api
+      - db-service
+      - finance-service
+      - web
+      - n8n
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./proxy/tls:/etc/nginx/tls:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- https://localhost:8443/healthz --no-check-certificate || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  mongo_data: {}
-  traefik_data: {}
-  n8n_data: {}
+  mongo-data:
+  n8n_data:
+  traefik_data:
